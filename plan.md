@@ -88,6 +88,17 @@ Output: estimated arrival time at every route point, total ride duration, ETA at
 - Side-by-side multi-scenario comparison view.
 - Route map rendering (needs tile server; conflicts with single-file/offline goal).
 
+## Fueling planner (v2 — prototyping)
+
+Goal: plan calories/carbs for 300km+ rides fueled by a mix of gels, bars and real food stops.
+
+- **Burn**: estimate work (kJ) per segment from the power model (invert from speed when in speed mode); kJ ≈ kcal burned at ~24% gross efficiency.
+- **Intake**: target carb rate (g/h, default 70 — gut-limited, not burn-matched), configurable gel/bar carb content.
+- **Stops**: user-placed food stops (km, duration, meal carbs). Stops pause the clock — all downstream ETAs and weather interpolation shift. Auto-place option every ~4.5h riding.
+- **Schedule**: on-bike eating events spaced to hit the target rate; bars early in the ride, gels later; each event nudged to the flattest road within ±6 min; no on-bike eating for ~40 min after a meal stop.
+- **Presentation**: summary cards (burn, intake plan + coverage %, shopping list "carry N gels / M bars", fluids estimate from forecast temperature), a time-ordered schedule table, and event markers on the timeline chart.
+- Open questions for prototype feedback: schedule granularity, whether to model carb type mix (glucose:fructose) and caffeine, smarter stop placement (towns/opening hours), per-rider sweat/fluid model.
+
 ## Build order
 
 1. HTML skeleton, controls panel, GPX parse + route stats (distance, climbing, elevation profile).

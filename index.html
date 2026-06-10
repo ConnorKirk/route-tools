@@ -110,6 +110,23 @@
 
   footer { margin-top: 22px; color: var(--muted); font-size: 12px; }
 
+  /* Fueling */
+  #fuel-wrap { display: none; margin-top: 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .fuel-head { display: flex; justify-content: space-between; align-items: center; }
+  .fuel-head h2 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .fuel-toggle { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  .fuel-controls { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; margin-top: 10px; }
+  .stops-table { width: auto; font-size: 13px; }
+  .stops-table th, .stops-table td { padding: 3px 8px; border: none; text-align: left; }
+  .stops-table input { width: 78px; background: var(--panel2); border: 1px solid var(--border); border-radius: 5px; color: var(--text); padding: 4px 7px; font-size: 13px; }
+  .stop-btns { margin-top: 6px; display: flex; gap: 8px; }
+  .stop-btns button, .rm-stop { background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+  .stop-btns button:hover { border-color: var(--accent); }
+  .rm-stop { padding: 2px 8px; color: var(--bad); }
+  .mut-cell { color: var(--muted); font-size: 12px; }
+  #fuel-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 12px; }
+  #fuel-table-wrap { margin-top: 12px; overflow-x: auto; }
+
   /* Hover tooltip */
   #tooltip {
     display: none; position: fixed; z-index: 10; pointer-events: none;
@@ -223,6 +240,7 @@
       <span><i style="background:#9aa7c4"></i>Wind arrows (↓ = headwind, length = speed)</span>
       <span><i style="background:#3c4456"></i>Elevation</span>
       <span><i style="background:#0a0c14"></i>Darkness</span>
+      <span>Fuel: <span style="color:var(--warn)">●</span> gel · <span style="color:var(--good)">■</span> bar · <span style="color:var(--rain)">▮</span> food stop</span>
     </div>
     <div id="chart"></div>
   </div>
@@ -237,6 +255,47 @@
       </thead>
       <tbody id="table-body"></tbody>
     </table>
+  </div>
+
+  <div id="fuel-wrap">
+    <div class="fuel-head">
+      <h2>Fueling</h2>
+      <label class="fuel-toggle"><input type="checkbox" id="fuel-on" checked> plan fueling</label>
+    </div>
+    <div id="fuel-body">
+      <div class="fuel-controls">
+        <div class="ctl w-s">
+          <label for="carb-target" title="Carbohydrate intake rate. Gut absorption — not energy burn — is the limit: ~60 g/h from glucose alone, 90–120 g/h from glucose:fructose mixes with a trained gut.">Carbs g/h ⓘ</label>
+          <input type="number" id="carb-target" value="70" min="30" max="130" step="5">
+        </div>
+        <div class="ctl w-xs">
+          <label for="gel-carbs">Gel g</label>
+          <input type="number" id="gel-carbs" value="25" min="15" max="50" step="1">
+        </div>
+        <div class="ctl w-xs">
+          <label for="bar-carbs">Bar g</label>
+          <input type="number" id="bar-carbs" value="40" min="20" max="70" step="1">
+        </div>
+        <div class="ctl fuel-stops-ctl">
+          <label>Food stops — cafes / restaurants (pause the clock, shift all ETAs)</label>
+          <table class="stops-table">
+            <thead><tr><th>km</th><th>stop min</th><th>meal carbs g</th><th></th></tr></thead>
+            <tbody id="stops-body"></tbody>
+          </table>
+          <div class="stop-btns">
+            <button id="add-stop">+ add stop</button>
+            <button id="auto-stops" title="Place a 30-min stop every ~4.5 h of riding">auto-place</button>
+          </div>
+        </div>
+      </div>
+      <div id="fuel-summary"></div>
+      <div id="fuel-table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>km</th><th style="text-align:left">Eat</th><th>Carbs</th><th style="text-align:left">Note</th></tr></thead>
+          <tbody id="fuel-table-body"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <div id="tooltip"></div>
@@ -428,6 +487,100 @@ function computeTiming(route, p) {
   const arr = new Array(n).fill(0); // seconds from start at each point
   for (let i = 0; i < n - 1; i++) arr[i + 1] = arr[i] + segLen[i] / segV[i];
   return { arr, dur: arr[n - 1], segV };
+}
+
+/* ============================== fueling model ============================== */
+
+function idxForDist(route, meters) {
+  let lo = 0, hi = route.cum.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; route.cum[mid] < meters ? lo = mid + 1 : hi = mid; }
+  return lo;
+}
+
+// insert stop dwell times into the arrival array; returns adjusted arr + stop list
+// with each stop's arrival time (tArr = arrival, departure = tArr + min*60)
+function applyStops(baseArr, route, stops) {
+  const arr = baseArr.slice();
+  const list = [];
+  for (const s of [...stops].sort((a, b) => a.km - b.km)) {
+    const idx = idxForDist(route, s.km * 1000);
+    list.push({ ...s, idx, tArr: arr[idx] });
+    for (let i = idx + 1; i < arr.length; i++) arr[i] += s.min * 60;
+  }
+  return { arr, list };
+}
+
+// kJ of work from the physics model; in speed mode, back-calculate power from
+// the segment speed. kcal burned = work / 4.184 / ~24% gross efficiency (≈ kJ).
+function estimateEnergy(route, baseTiming, p) {
+  const g = 9.8067;
+  let kJ = 0;
+  for (let i = 0; i < route.grad.length; i++) {
+    const v = baseTiming.segV[i];
+    const dt = (route.cum[i + 1] - route.cum[i]) / v;
+    let P;
+    if (p.mode === 'power') {
+      P = p.power;
+    } else {
+      const theta = Math.atan(route.grad[i]);
+      const meanEle = (route.ele[i] + route.ele[i + 1]) / 2;
+      const rho = 1.225 * Math.exp(-Math.max(0, meanEle) / 8500);
+      const F = p.mass * g * (Math.sin(theta) + p.crr * Math.cos(theta));
+      P = Math.max(0, (F * v + 0.5 * rho * p.cda * v * v * v) / 0.975);
+    }
+    kJ += P * dt / 1000;
+  }
+  const kcal = kJ / 4.184 / 0.24;
+  return { kJ, kcal, kcalPerH: kcal / (baseTiming.dur / 3600) };
+}
+
+// index of the flattest road between ride times loT..hiT (t = nominal fallback)
+function flattestNear(route, timing, loT, hiT, t) {
+  const i0 = idxForTime(timing.arr, Math.max(0, loT));
+  const i1 = Math.min(idxForTime(timing.arr, Math.max(loT, hiT)), route.grad.length - 1);
+  let best = Math.min(idxForTime(timing.arr, t), route.grad.length - 1), bg = Infinity;
+  for (let i = i0; i <= i1; i++) {
+    const g = Math.abs(route.grad[i]);
+    if (g < bg) { bg = g; best = i; }
+  }
+  return best;
+}
+
+// On-bike events spaced to hit the carb target: bars in the first ~55% of the
+// ride, gels after; each nudged to the flattest road within ±6 min. Meals at
+// stops; no on-bike eating from 10 min before a stop until ~40 min after leaving.
+function generateFuelPlan(route, timing, stopList, fp) {
+  const dur = timing.dur;
+  const events = stopList.map(s => ({
+    t: s.tArr, type: 'meal', carbs: s.carbs, min: s.min, km: s.km,
+  }));
+  const POST_MEAL = 2400, FIRST_SNACK = 1200, NUDGE = 360;
+  // no-eating windows: 10 min before a stop until POST_MEAL after leaving it
+  const windows = events.map(ev => [ev.t - 600, ev.t + ev.min * 60 + POST_MEAL]);
+  let t = FIRST_SNACK, guard = 0;
+  while (t < dur - 900 && guard++ < 300) {
+    const w = windows.find(([a, b]) => t >= a && t < b);
+    if (w) { t = w[1]; continue; }
+    const isGel = t / dur > 0.55;
+    const carbs = isGel ? fp.gelCarbs : fp.barCarbs;
+    // flattest road within ±6 min, but never nudged across a meal-window edge
+    let lo = t - NUDGE, hi = t + NUDGE;
+    for (const [a, b] of windows) {
+      if (b <= t) lo = Math.max(lo, b);
+      if (a >= t) hi = Math.min(hi, a - 1);
+    }
+    const i = flattestNear(route, timing, lo, hi, t);
+    events.push({
+      t: timing.arr[i], type: isGel ? 'gel' : 'bar', carbs,
+      km: route.cum[i] / 1000, grad: route.grad[Math.min(i, route.grad.length - 1)],
+    });
+    t += 3600 * carbs / fp.carbTarget;
+  }
+  events.sort((a, b) => a.t - b.t);
+  const gels = events.filter(e => e.type === 'gel').length;
+  const bars = events.filter(e => e.type === 'bar').length;
+  const totalCarbs = events.reduce((s, e) => s + e.carbs, 0);
+  return { events, gels, bars, meals: stopList.length, totalCarbs, ratePerH: totalCarbs / (dur / 3600) };
 }
 
 /* ============================== weather ============================== */
@@ -645,11 +798,11 @@ function setBanner(kind, msg) {
   el.style.display = kind ? 'block' : 'none';
 }
 
-function renderRouteStats(route, timing, startMs) {
+function renderRouteStats(route, timing, startMs, stopSec) {
   const parts = [
     `<b class="num">${f1(route.totalDist / 1000)} km</b>`,
     route.hasEle ? `<b class="num">${f0(route.climb)} m</b> climbing` : 'no elevation data in GPX',
-    `est. <b class="num">${fmtDur(timing.dur)}</b>`,
+    `est. <b class="num">${fmtDur(timing.dur)}</b>${stopSec ? ` (incl. ${fmtDur(stopSec)} stops)` : ''}`,
     `finish <b class="num">${fmtEta(startMs + timing.dur * 1000, startMs)}</b>`,
   ];
   $('route-stats').innerHTML = parts.join(' &nbsp;·&nbsp; ');
@@ -854,6 +1007,22 @@ function renderChart(route, timing, ptWx, samples, rows, startMs) {
     const xx = x(timing.arr[lo2]);
     out.push(`<text x="${xx.toFixed(1)}" y="${CH.temp.y - 16}" fill="#5a6172" font-size="9.5" text-anchor="middle" class="num">${km}km</text>`);
     out.push(`<line x1="${xx.toFixed(1)}" y1="${CH.temp.y - 13}" x2="${xx.toFixed(1)}" y2="${CH.temp.y - 9}" stroke="#3a4150"/>`);
+  }
+
+  // ---- fueling event markers (above the elevation panel) ----
+  const plan = state.lastRender && state.lastRender.fuelPlan;
+  if (plan) {
+    const my = CH.elev.y - 8;
+    for (const ev of plan.events) {
+      const xx = x(ev.t).toFixed(1);
+      const tt = `<title>${fmtEta(startMs + ev.t * 1000, startMs)} · ${FUEL_LABEL[ev.type]} ${f0(ev.carbs)}g · km ${f0(ev.km)}</title>`;
+      if (ev.type === 'meal')
+        out.push(`<rect x="${xx - 4.5}" y="${my - 7}" width="9" height="11" rx="2" fill="var(--rain)">${tt}</rect>`);
+      else if (ev.type === 'bar')
+        out.push(`<rect x="${xx - 3}" y="${my - 3}" width="6" height="6" fill="var(--good)">${tt}</rect>`);
+      else
+        out.push(`<circle cx="${xx}" cy="${my}" r="3.2" fill="var(--warn)">${tt}</circle>`);
+    }
   }
 
   out.push(`<line id="chart-cross" x1="0" x2="0" y1="${CH.temp.y - 14}" y2="${CH.axisY}" stroke="#cdd6e8" stroke-width="1" opacity="0" pointer-events="none"/>`);
@@ -1088,6 +1257,67 @@ function renderTable(rows, startMs) {
   $('table-wrap').style.display = 'block';
 }
 
+/* -------- fueling panel -------- */
+
+let fuelStops = []; // {km, min, carbs}
+
+function readFuelParams() {
+  return {
+    enabled: $('fuel-on').checked,
+    carbTarget: clamp(parseFloat($('carb-target').value) || 70, 20, 140),
+    gelCarbs: clamp(parseFloat($('gel-carbs').value) || 25, 10, 60),
+    barCarbs: clamp(parseFloat($('bar-carbs').value) || 40, 15, 80),
+  };
+}
+
+function renderStopsEditor() {
+  $('stops-body').innerHTML = fuelStops.map((s, i) => `<tr>
+    <td><input type="number" data-i="${i}" data-k="km" value="${s.km}" min="1" step="1"></td>
+    <td><input type="number" data-i="${i}" data-k="min" value="${s.min}" min="5" step="5"></td>
+    <td><input type="number" data-i="${i}" data-k="carbs" value="${s.carbs}" min="0" step="10"></td>
+    <td><button class="rm-stop" data-i="${i}" title="remove stop">✕</button></td>
+  </tr>`).join('') || '<tr><td colspan="4" class="mut-cell">no stops planned — add one, or auto-place</td></tr>';
+}
+
+const FUEL_LABEL = { gel: '⚡ gel', bar: '🍫 bar', meal: '🍽️ food stop' };
+
+function renderFuel(plan, energy, fp, timing, startMs, meanTemp) {
+  $('fuel-wrap').style.display = 'block';
+  $('fuel-body').hidden = !fp.enabled;
+  if (!plan) return;
+
+  const coverage = plan.totalCarbs * 4 / energy.kcal * 100;
+  const fluidRate = meanTemp == null ? null : meanTemp > 24 ? 0.8 : meanTemp > 16 ? 0.65 : 0.5;
+  const cards = [
+    `<div class="card"><h3>Energy burn</h3>
+      <div class="big num">${f0(energy.kcal)} kcal</div>
+      <div class="det num"><b>${f0(energy.kcalPerH)} kcal/h</b> riding · ${f0(energy.kJ)} kJ of work</div></div>`,
+    `<div class="card"><h3>Intake plan</h3>
+      <div class="big num">${f0(plan.ratePerH)} g/h <span style="font-size:13px;color:var(--muted)">carbs</span></div>
+      <div class="det num"><b>${f0(plan.totalCarbs)} g</b> ≈ ${f0(plan.totalCarbs * 4)} kcal · covers <b>${f0(coverage)}%</b> of burn (30–60% is normal — the rest comes from body fat)</div></div>`,
+    `<div class="card"><h3>Carry</h3>
+      <div class="big num">${plan.gels} gels · ${plan.bars} bars</div>
+      <div class="det num">+ <b>${plan.meals}</b> food stop${plan.meals === 1 ? '' : 's'} · restock en route if carrying less</div></div>`,
+    `<div class="card"><h3>Fluids</h3>
+      <div class="big num">${fluidRate ? f1(fluidRate * timing.dur / 3600) + ' L' : '–'}</div>
+      <div class="det num">${fluidRate ? `<b>${f1(fluidRate)} L/h</b> at ${f1(meanTemp)}°C forecast mean — more in heat, plus electrolytes` : 'waiting for forecast'}</div></div>`,
+  ];
+  $('fuel-summary').innerHTML = cards.join('');
+
+  $('fuel-table-body').innerHTML = plan.events.map(e => {
+    const note = e.type === 'meal'
+      ? `${e.min} min stop — clock paused, no on-bike eating for ~40 min after`
+      : Math.abs(e.grad) < 0.015 ? 'flat road' : `on ${e.grad > 0 ? '+' : ''}${f1(e.grad * 100)}%`;
+    return `<tr>
+      <td class="num">${fmtEta(startMs + e.t * 1000, startMs)}</td>
+      <td class="num">${f0(e.km)}</td>
+      <td style="text-align:left">${FUEL_LABEL[e.type]}</td>
+      <td class="num">${f0(e.carbs)} g</td>
+      <td class="notes">${note}</td>
+    </tr>`;
+  }).join('');
+}
+
 /* -------- hover tooltips (map + chart) -------- */
 
 // nearest index in a sorted array
@@ -1219,12 +1449,20 @@ async function recompute() {
   if (!isFinite(p.startMs)) return;
 
   const route = state.route;
-  const timing = computeTiming(route, p);
-  renderRouteStats(route, timing, p.startMs);
+  const fp = readFuelParams();
+  const base = computeTiming(route, p);
+  const stops = fp.enabled ? fuelStops.filter(s => s.km > 0 && s.km < route.totalDist / 1000 && s.min > 0) : [];
+  const { arr, list: stopList } = applyStops(base.arr, route, stops);
+  const timing = { arr, dur: arr[arr.length - 1], segV: base.segV };
+  renderRouteStats(route, timing, p.startMs, timing.dur - base.dur);
+
+  const energy = estimateEnergy(route, base, p);
+  const fuelPlan = fp.enabled ? generateFuelPlan(route, timing, stopList, fp) : null;
 
   const samples = pickSamples(route);
-  state.lastRender = { route, timing, ptWx: null, samples, startMs: p.startMs };
+  state.lastRender = { route, timing, ptWx: null, samples, startMs: p.startMs, fuelPlan };
   renderMap(); // grey route immediately; recolored once the forecast arrives
+  renderFuel(fuelPlan, energy, fp, timing, p.startMs, null);
 
   const [kind, msg] = confidenceNote(p.startMs);
   setBanner(kind, msg);
@@ -1250,6 +1488,7 @@ async function recompute() {
     renderSummary(stats, locs, p.startMs, timing);
     renderChart(route, timing, ptWx, samples, rows, p.startMs);
     renderTable(rows, p.startMs);
+    renderFuel(fuelPlan, energy, fp, timing, p.startMs, stats.tempMean); // adds fluids estimate
   } catch (e) {
     setBanner('err', 'Failed to analyse weather data: ' + e.message);
     console.error(e);
@@ -1353,8 +1592,41 @@ function init() {
   $('gpx-url-go').addEventListener('click', () => loadFromUrl($('gpx-url').value));
   $('gpx-url').addEventListener('keydown', e => { if (e.key === 'Enter') loadFromUrl($('gpx-url').value); });
 
-  for (const id of ['start', 'speed', 'power', 'rider-kg', 'bike-kg', 'cda', 'crr', 'desc-cap'])
+  for (const id of ['start', 'speed', 'power', 'rider-kg', 'bike-kg', 'cda', 'crr', 'desc-cap',
+                    'carb-target', 'gel-carbs', 'bar-carbs'])
     $(id).addEventListener('input', recomputeSoon);
+
+  // fueling: stop editor (delegated so typing doesn't lose focus to re-renders)
+  $('fuel-on').addEventListener('change', recomputeSoon);
+  $('stops-body').addEventListener('input', e => {
+    const i = +e.target.dataset.i, k = e.target.dataset.k;
+    if (fuelStops[i] && k) { fuelStops[i][k] = parseFloat(e.target.value) || 0; recomputeSoon(); }
+  });
+  $('stops-body').addEventListener('click', e => {
+    if (e.target.classList.contains('rm-stop')) {
+      fuelStops.splice(+e.target.dataset.i, 1);
+      renderStopsEditor();
+      recomputeSoon();
+    }
+  });
+  $('add-stop').addEventListener('click', () => {
+    const km = state.route ? Math.round(state.route.totalDist / 2000) : 100;
+    fuelStops.push({ km, min: 30, carbs: 100 });
+    renderStopsEditor();
+    recomputeSoon();
+  });
+  $('auto-stops').addEventListener('click', () => {
+    if (!state.route) return;
+    const p = readParams();
+    if (!isFinite(p.startMs)) return;
+    const base = computeTiming(state.route, p);
+    fuelStops = [];
+    for (let t = 4.5 * 3600; t < base.dur - 5400; t += 5 * 3600)
+      fuelStops.push({ km: Math.round(state.route.cum[idxForTime(base.arr, t)] / 1000), min: 30, carbs: 100 });
+    renderStopsEditor();
+    recomputeSoon();
+  });
+  renderStopsEditor();
 }
 
 if (typeof document !== 'undefined') init();
