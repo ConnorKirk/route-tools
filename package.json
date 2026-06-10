@@ -1,0 +1,8 @@
+{
+  "name": "route-tools",
+  "private": true,
+  "description": "Ride Weather Planner — single-file GPX weather + fueling planning",
+  "scripts": {
+    "test": "node --test"
+  }
+}

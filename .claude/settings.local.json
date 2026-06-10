@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(~/.nvm/versions/node/v26.3.0/bin/node --test)"
+    ]
+  }
+}
