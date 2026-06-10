@@ -304,7 +304,7 @@
 
   <div id="tooltip"></div>
 
-  <footer>All times shown in this browser's timezone. Forecast data from <a href="https://open-meteo.com" style="color:var(--accent)">Open-Meteo</a>; map outlines from <a href="https://www.naturalearthdata.com" style="color:var(--accent)">Natural Earth</a> (fetched once per session); everything else runs locally in this file.</footer>
+  <footer>Your route and settings are saved in this browser (localStorage) between visits — nothing is uploaded anywhere. All times shown in this browser's timezone. Forecast data from <a href="https://open-meteo.com" style="color:var(--accent)">Open-Meteo</a>; map outlines from <a href="https://www.naturalearthdata.com" style="color:var(--accent)">Natural Earth</a> (fetched once per session); everything else runs locally in this file.</footer>
 </main>
 
 <script>
@@ -1227,6 +1227,7 @@ function setMapMode(m) {
   for (const [id, k] of [['map-wind', 'wind'], ['map-temp', 'temp'], ['map-dark', 'dark']])
     $(id).classList.toggle('on', k === m);
   renderMap();
+  saveState();
 }
 
 /* -------- conditions table -------- */
@@ -1449,6 +1450,66 @@ function onMapHover(e) {
   showTip(e, pointDetailHTML(best));
 }
 
+/* ============================== persistence (localStorage) ============================== */
+
+const STORE_KEY = 'ride-weather-v1';
+const SAVED_INPUTS = ['start', 'speed', 'power', 'rider-kg', 'bike-kg', 'cda', 'crr', 'desc-cap',
+                      'carb-target', 'gel-carbs', 'bar-carbs'];
+
+function saveState() {
+  try {
+    const data = {
+      inputs: {},
+      mode: $('mode-power').classList.contains('on') ? 'power' : 'speed',
+      fuelOn: $('fuel-on').checked,
+      fuelStops, mapMode,
+      fileName: state.fileName,
+      // downsampled route points (≤2000) — far smaller than the raw GPX
+      pts: state.route
+        ? state.route.pts.map(p => [+p.lat.toFixed(5), +p.lon.toFixed(5),
+                                    p.ele == null ? null : Math.round(p.ele * 10) / 10])
+        : null,
+    };
+    for (const id of SAVED_INPUTS) data.inputs[id] = $(id).value;
+    localStorage.setItem(STORE_KEY, JSON.stringify(data));
+  } catch (e) { /* quota exceeded / private browsing — persistence is best-effort */ }
+}
+
+function restoreState() {
+  let d;
+  try { d = JSON.parse(localStorage.getItem(STORE_KEY)); } catch (e) { return false; }
+  if (!d) return false;
+
+  if (d.inputs) for (const id of SAVED_INPUTS) if (d.inputs[id] != null) $(id).value = d.inputs[id];
+  if (d.mode) setModeUI(d.mode);
+  if (typeof d.fuelOn === 'boolean') $('fuel-on').checked = d.fuelOn;
+  if (Array.isArray(d.fuelStops)) fuelStops = d.fuelStops.filter(s => s && isFinite(s.km) && isFinite(s.min));
+  if (d.mapMode) {
+    mapMode = d.mapMode;
+    for (const [id, k] of [['map-wind', 'wind'], ['map-temp', 'temp'], ['map-dark', 'dark']])
+      $(id).classList.toggle('on', k === mapMode);
+  }
+
+  // a saved start in the past means a stale plan — bump to tomorrow, same time of day
+  const sv = new Date($('start').value).getTime();
+  if (isFinite(sv) && sv < Date.now() - 864e5) {
+    const old = new Date(sv);
+    const next = new Date(Date.now() + 864e5);
+    $('start').value = localISODate(next.getTime()) + 'T'
+      + String(old.getHours()).padStart(2, '0') + ':' + String(old.getMinutes()).padStart(2, '0');
+  }
+
+  if (Array.isArray(d.pts) && d.pts.length > 1) {
+    try {
+      state.route = buildRoute(d.pts.map(([lat, lon, ele]) => ({ lat, lon, ele })));
+      state.fileName = d.fileName || 'saved route';
+      $('dz-label').textContent = state.fileName;
+      $('dz-sub').textContent = `${f1(state.route.totalDist / 1000)} km · restored from last visit`;
+    } catch (e) { /* corrupt save — start fresh */ }
+  }
+  return !!state.route;
+}
+
 /* ============================== wiring ============================== */
 
 const state = { route: null, fileName: null, lastRender: null };
@@ -1477,6 +1538,7 @@ function confidenceNote(startMs) {
 }
 
 async function recompute() {
+  saveState(); // every (debounced) change persists, route or not
   if (!state.route) return;
   const p = readParams();
   if (!isFinite(p.startMs)) return;
@@ -1585,12 +1647,16 @@ function handleFile(file) {
   reader.readAsText(file);
 }
 
-function setMode(mode) {
+function setModeUI(mode) {
   $('mode-speed').classList.toggle('on', mode === 'speed');
   $('mode-power').classList.toggle('on', mode === 'power');
   document.querySelectorAll('[data-mode]').forEach(el => {
     el.hidden = el.dataset.mode !== mode;
   });
+}
+
+function setMode(mode) {
+  setModeUI(mode);
   recomputeSoon();
 }
 
@@ -1659,7 +1725,10 @@ function init() {
     renderStopsEditor();
     recomputeSoon();
   });
+
+  const restored = restoreState();
   renderStopsEditor();
+  if (restored) recompute();
 }
 
 if (typeof document !== 'undefined') init();
