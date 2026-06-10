@@ -1,10 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { loadApp, syntheticRoute, stubBrowser } = require('./_load');
+const { app, syntheticRoute, stubBrowser } = require('./_helpers');
 
 test('idxForTime snaps to the nearest index and clamps', () => {
-  const app = loadApp();
   const a = [0, 10, 20, 30];
   assert.equal(app.idxForTime(a, -5), 0);
   assert.equal(app.idxForTime(a, 14), 1);
@@ -13,7 +12,6 @@ test('idxForTime snaps to the nearest index and clamps', () => {
 });
 
 test('map colors classify wind / temp / darkness correctly', () => {
-  const app = loadApp();
   const fakeRoute = { pts: new Array(5).fill({}), cum: [0, 1, 2, 3, 4] };
   const wx = [
     { head: 15, cross: 3, temp: 5, dark: false },
@@ -36,9 +34,8 @@ test('map colors classify wind / temp / darkness correctly', () => {
 });
 
 test('persistence round-trips route, inputs and stops', () => {
-  const app = loadApp();
-  const route = syntheticRoute(app);
-  const { el, storage } = stubBrowser(app);
+  const route = syntheticRoute();
+  const { el, storage } = stubBrowser();
 
   el('start').value = '2026-01-01T06:30'; // in the past — should bump on restore
   el('speed').value = '29';
@@ -67,8 +64,7 @@ test('persistence round-trips route, inputs and stops', () => {
 });
 
 test('corrupt saved data falls back to a fresh session', () => {
-  const app = loadApp();
-  const { storage } = stubBrowser(app);
+  const { storage } = stubBrowser();
   storage._m[app.STORE_KEY] = '{not json';
   assert.equal(app.restoreState(), false);
 });

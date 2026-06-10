@@ -1,10 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { loadApp, syntheticRoute } = require('./_load');
-
-const app = loadApp();
-const route = syntheticRoute(app);
+const { app, syntheticRoute } = require('./_helpers');
+const route = syntheticRoute();
 
 test('route model: distance, climbing, smoothing', () => {
   const km = route.totalDist / 1000;
@@ -15,7 +13,7 @@ test('route model: distance, climbing, smoothing', () => {
 });
 
 test('huge tracks are downsampled to the point cap', () => {
-  const big = syntheticRoute(app, 9000);
+  const big = syntheticRoute(9000);
   assert.ok(big.pts.length <= 2001, `downsampled (got ${big.pts.length} pts)`);
   assert.ok(Math.abs(big.totalDist - route.totalDist) / route.totalDist < 0.25, 'distance roughly preserved');
 });

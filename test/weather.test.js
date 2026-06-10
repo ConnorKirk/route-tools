@@ -1,10 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { loadApp, syntheticRoute, fakeForecast } = require('./_load');
-
-const app = loadApp();
-const route = syntheticRoute(app);
+const { app, syntheticRoute, fakeForecast } = require('./_helpers');
+const route = syntheticRoute();
 const timing = app.computeTiming(route, { mode: 'speed', speed: 27, descCapKmh: 58 });
 const T0 = Math.floor(Date.UTC(2026, 5, 13, 18) / 1000); // 18:00 UTC — ride crosses midnight
 
@@ -26,14 +24,14 @@ test('wind direction interpolates circularly across north', () => {
 });
 
 test('darkness handles midnight rollover with per-day sunrise/sunset', () => {
-  const [loc] = fakeForecast(app, 1, T0);
+  const [loc] = fakeForecast(1, T0);
   assert.equal(app.isDark(loc, T0 + 5 * 3600), true, 'dark after day-1 sunset');
   assert.equal(app.isDark(loc, T0 + 12 * 3600), false, 'light after day-2 sunrise');
 });
 
 test('conditions + summary: wind vs heading, rain totals, dark hours', () => {
   const samples = app.pickSamples(route);
-  const locs = fakeForecast(app, samples.length, T0);
+  const locs = fakeForecast(samples.length, T0);
   const startMs = T0 * 1000;
 
   const { ptWx, rows } = app.computeConditions(route, timing, samples, locs, startMs);

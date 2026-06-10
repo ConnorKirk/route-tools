@@ -10,7 +10,7 @@ A single-file HTML tool for planning long cycling rides (300km+ / 12h+). Upload 
 
 ## Architecture
 
-- **Single self-contained HTML file** — all JS/CSS inline. No build step, no dependencies beyond optional CDN chart library (or hand-rolled SVG charts to stay fully offline-capable).
+- **One HTML file + one plain JS file** — no build step, no dependencies; hand-rolled SVG charts. (Originally a single self-contained HTML file; split so tests can `require()` the logic directly.)
 - **Weather API: Open-Meteo** — free, no API key, CORS-enabled (works from `file://`). Hourly forecasts up to 16 days ahead; supports batch multi-location requests.
 - All computation client-side.
 
