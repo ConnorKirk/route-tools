@@ -125,6 +125,9 @@
   .rm-stop { padding: 2px 8px; color: var(--bad); }
   .mut-cell { color: var(--muted); font-size: 12px; }
   #fuel-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 12px; }
+  #fuel-rhythm { margin-top: 10px; padding: 9px 14px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; font-size: 13.5px; line-height: 1.7; }
+  #fuel-rhythm b { color: var(--text); }
+  #fuel-rhythm .mut { color: var(--muted); }
   #fuel-table-wrap { margin-top: 12px; overflow-x: auto; }
 
   /* Hover tooltip */
@@ -289,9 +292,10 @@
         </div>
       </div>
       <div id="fuel-summary"></div>
+      <div id="fuel-rhythm"></div>
       <div id="fuel-table-wrap">
         <table>
-          <thead><tr><th>Time</th><th>km</th><th style="text-align:left">Eat</th><th>Carbs</th><th style="text-align:left">Note</th></tr></thead>
+          <thead><tr><th>Elapsed</th><th>km</th><th style="text-align:left">Eat</th><th>Carbs</th><th style="text-align:left">Note</th></tr></thead>
           <tbody id="fuel-table-body"></tbody>
         </table>
       </div>
@@ -325,6 +329,10 @@ function fmtEta(ms, startMs) {
   return fmtClock(ms) + (days > 0 ? ` +${days}d` : '');
 }
 function startOfDay(ms) { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); }
+function fmtElapsed(sec) {
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  return `${h}h${String(m).padStart(2, '0')}`;
+}
 function fmtDur(sec) {
   const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
   return `${h}h ${String(m).padStart(2, '0')}m`;
@@ -1015,7 +1023,7 @@ function renderChart(route, timing, ptWx, samples, rows, startMs) {
     const my = CH.elev.y - 8;
     for (const ev of plan.events) {
       const xx = x(ev.t).toFixed(1);
-      const tt = `<title>${fmtEta(startMs + ev.t * 1000, startMs)} · ${FUEL_LABEL[ev.type]} ${f0(ev.carbs)}g · km ${f0(ev.km)}</title>`;
+      const tt = `<title>${fmtElapsed(ev.t)} (${fmtEta(startMs + ev.t * 1000, startMs)}) · ${FUEL_LABEL[ev.type]} ${f0(ev.carbs)}g · km ${f0(ev.km)}</title>`;
       if (ev.type === 'meal')
         out.push(`<rect x="${xx - 4.5}" y="${my - 7}" width="9" height="11" rx="2" fill="var(--rain)">${tt}</rect>`);
       else if (ev.type === 'bar')
@@ -1281,6 +1289,29 @@ function renderStopsEditor() {
 
 const FUEL_LABEL = { gel: '⚡ gel', bar: '🍫 bar', meal: '🍽️ food stop' };
 
+// the memorable version of the plan: "bar every ~34 min until 5h40, then gel
+// every ~21 min" — interval is the median gap so meal-stop pauses don't skew it
+function rhythmSummary(plan, startMs) {
+  const cadence = type => {
+    const evs = plan.events.filter(e => e.type === type);
+    if (!evs.length) return null;
+    if (evs.length === 1) return { one: evs[0] };
+    const gaps = evs.slice(1).map((e, i) => e.t - evs[i].t).sort((a, b) => a - b);
+    return { iv: gaps[Math.floor(gaps.length / 2)], first: evs[0], last: evs[evs.length - 1] };
+  };
+  const bits = [];
+  const b = cadence('bar'), g = cadence('gel');
+  if (b) bits.push(b.one
+    ? `🍫 one bar at <b class="num">${fmtElapsed(b.one.t)}</b>`
+    : `🍫 bar every <b class="num">~${Math.round(b.iv / 60)} min</b> until <b class="num">${fmtElapsed(b.last.t)}</b>`);
+  if (g) bits.push(g.one
+    ? `⚡ one gel at <b class="num">${fmtElapsed(g.one.t)}</b>`
+    : `⚡ then gel every <b class="num">~${Math.round(g.iv / 60)} min</b> to the finish`);
+  for (const m of plan.events.filter(e => e.type === 'meal'))
+    bits.push(`🍽️ km <b class="num">${f0(m.km)}</b> at <b class="num">${fmtElapsed(m.t)}</b> <span class="mut num">(~${fmtClock(startMs + m.t * 1000)}, ${m.min} min)</span>`);
+  return bits.join(' &nbsp;·&nbsp; ');
+}
+
 function renderFuel(plan, energy, fp, timing, startMs, meanTemp) {
   $('fuel-wrap').style.display = 'block';
   $('fuel-body').hidden = !fp.enabled;
@@ -1304,12 +1335,14 @@ function renderFuel(plan, energy, fp, timing, startMs, meanTemp) {
   ];
   $('fuel-summary').innerHTML = cards.join('');
 
+  $('fuel-rhythm').innerHTML = rhythmSummary(plan, startMs);
+
   $('fuel-table-body').innerHTML = plan.events.map(e => {
     const note = e.type === 'meal'
-      ? `${e.min} min stop — clock paused, no on-bike eating for ~40 min after`
+      ? `arrive ~${fmtEta(startMs + e.t * 1000, startMs)} · ${e.min} min stop — clock paused, no on-bike eating for ~40 min after`
       : Math.abs(e.grad) < 0.015 ? 'flat road' : `on ${e.grad > 0 ? '+' : ''}${f1(e.grad * 100)}%`;
     return `<tr>
-      <td class="num">${fmtEta(startMs + e.t * 1000, startMs)}</td>
+      <td class="num">${fmtElapsed(e.t)}</td>
       <td class="num">${f0(e.km)}</td>
       <td style="text-align:left">${FUEL_LABEL[e.type]}</td>
       <td class="num">${f0(e.carbs)} g</td>
